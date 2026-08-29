@@ -21,9 +21,10 @@ if uploaded_file is not None:
     data_source = uploaded_file
 elif drive_link:
     try:
+        drive_link = drive_link.strip()
         if "/d/" in drive_link:
             file_id = drive_link.split("/d/")[1].split("/")[0]
-            data_source = f"https://drive.google.com/uc?export=download&id={file_id}"
+            data_source = f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
         else:
             data_source = drive_link
     except Exception as e:
@@ -31,11 +32,17 @@ elif drive_link:
 
 if data_source is not None:
     try:
-        # 1. Caricamento contenuto grezzo (stringa o bytes)
+        # 1. Caricamento contenuto grezzo
         raw_bytes = None
         if isinstance(data_source, str):
-            response = requests.get(data_source)
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(data_source, headers=headers)
             raw_bytes = response.content
+            
+            # Controllo se è stata restituita una pagina HTML invece del file CSV
+            if b"<!DOCTYPE html>" in raw_bytes or b"<html" in raw_bytes:
+                st.error("⚠️ Il link di Google Drive non è accessibile. Assicurati che l'accesso al file su Drive sia impostato su 'Chiunque abbia il link'.")
+                st.stop()
         else:
             data_source.seek(0)
             raw_bytes = data_source.read()
@@ -65,20 +72,22 @@ if data_source is not None:
                         extracted_pace = int(parts[idx_p + 1])
                         break
 
-        # 2. Parsing in DataFrame
+        # 2. Parsing del DataFrame
         try:
-            df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=None, engine='python')
+            df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, engine='python', on_bad_lines='skip')
+            if df.shape[1] == 1:
+                df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=';', engine='python', on_bad_lines='skip')
         except:
-            df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=';', engine='python')
+            df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=';', engine='python', on_bad_lines='skip')
 
-        # Assegnazione garantita delle colonne tramite indicizzazione posizionale (iloc)
+        # Assegnazione posizionale delle colonne
         df['Team'] = df.iloc[:, 0]
         df['Result'] = df.iloc[:, 1]
-        df['Type_Positional'] = df.iloc[:, 2]  # Col C
+        df['Type_Positional'] = df.iloc[:, 2]
         df['Side'] = df.iloc[:, 3]
         df['Saves_Detail'] = df.iloc[:, 4]
-        df['Counter_Detail'] = df.iloc[:, 7] if df.shape[1] > 7 else '' # Col H
-        df['Detail_7m'] = df.iloc[:, 8] if df.shape[1] > 8 else ''       # Col I
+        df['Counter_Detail'] = df.iloc[:, 7] if df.shape[1] > 7 else ''
+        df['Detail_7m'] = df.iloc[:, 8] if df.shape[1] > 8 else ''
 
         def process_7m(row):
             val_i = str(row['Detail_7m']).strip() if pd.notna(row['Detail_7m']) else ''
