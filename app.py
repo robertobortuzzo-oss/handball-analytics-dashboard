@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import io
+import requests
 
 st.set_page_config(page_title="Handball Tactical Analytics", layout="wide")
 
@@ -29,14 +31,22 @@ elif drive_link:
 
 if data_source is not None:
     try:
-        # 1. Estrazione delle righe sia per Upload Locale sia per Google Drive URL
-        lines = []
+        # 1. Caricamento contenuto grezzo (stringa o bytes)
+        raw_bytes = None
         if isinstance(data_source, str):
-            lines_df = pd.read_csv(data_source, header=None, encoding='latin1', on_bad_lines='skip', engine='python')
-            lines = [",".join(map(str, row)) for row in lines_df.values]
+            response = requests.get(data_source)
+            raw_bytes = response.content
         else:
             data_source.seek(0)
-            lines = [line.decode('utf-8', errors='ignore') for line in data_source.readlines()]
+            raw_bytes = data_source.read()
+
+        # Decodifica testo per identificare le righe
+        try:
+            text_content = raw_bytes.decode('utf-8', errors='ignore')
+        except:
+            text_content = raw_bytes.decode('latin1', errors='ignore')
+
+        lines = text_content.splitlines()
 
         start_row = 0
         for idx, line in enumerate(lines):
@@ -45,7 +55,7 @@ if data_source is not None:
                 start_row = idx
                 break
 
-        # Estrattore automatico Pace dall'intestazione del foglio
+        # Estrattore automatico Pace dall'intestazione
         extracted_pace = 50
         for line in lines[:start_row]:
             parts = [p.strip().replace('"', '') for p in line.split(',')]
@@ -55,30 +65,23 @@ if data_source is not None:
                         extracted_pace = int(parts[idx_p + 1])
                         break
 
-        # 2. Lettura del dataset principale
-        if isinstance(data_source, str):
-            df = pd.read_csv(data_source, skiprows=start_row, header=None, encoding='latin1', on_bad_lines='skip', engine='python')
-        else:
-            data_source.seek(0)
-            try:
-                df = pd.read_csv(data_source, skiprows=start_row, header=None, sep=None, engine='python')
-            except:
-                data_source.seek(0)
-                df = pd.read_csv(data_source, skiprows=start_row, header=None, sep=';')
+        # 2. Parsing in DataFrame
+        try:
+            df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=None, engine='python')
+        except:
+            df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=';', engine='python')
 
-        # Mapping Colonne
-        df.rename(columns={
-            0: 'Team', 
-            1: 'Result', 
-            2: 'Type_Positional',
-            3: 'Side', 
-            4: 'Saves_Detail',
-            7: 'Counter_Detail',
-            8: 'Detail_7m'
-        }, inplace=True)
+        # Assegnazione garantita delle colonne tramite indicizzazione posizionale (iloc)
+        df['Team'] = df.iloc[:, 0]
+        df['Result'] = df.iloc[:, 1]
+        df['Type_Positional'] = df.iloc[:, 2]  # Col C
+        df['Side'] = df.iloc[:, 3]
+        df['Saves_Detail'] = df.iloc[:, 4]
+        df['Counter_Detail'] = df.iloc[:, 7] if df.shape[1] > 7 else '' # Col H
+        df['Detail_7m'] = df.iloc[:, 8] if df.shape[1] > 8 else ''       # Col I
 
         def process_7m(row):
-            val_i = str(row['Detail_7m']).strip() if 'Detail_7m' in row and pd.notna(row['Detail_7m']) else ''
+            val_i = str(row['Detail_7m']).strip() if pd.notna(row['Detail_7m']) else ''
             if val_i != '' and any(k in val_i.lower() for k in ['7m', '7m ext attack', '7m dwn attack', '7m 7x6']):
                 return val_i
             return None
@@ -98,7 +101,7 @@ if data_source is not None:
                 return p_7m
             phase = get_game_phase(row)
             if phase == 'Fast Break / Transition':
-                c_detail = str(row['Counter_Detail']).strip() if 'Counter_Detail' in row and pd.notna(row['Counter_Detail']) else ''
+                c_detail = str(row['Counter_Detail']).strip() if pd.notna(row['Counter_Detail']) else ''
                 return c_detail if c_detail != '' else 'Generic Counter'
             elif phase == 'Positional Attack':
                 p_detail = str(row['Type_Positional']).strip() if pd.notna(row['Type_Positional']) else ''
@@ -108,7 +111,7 @@ if data_source is not None:
         def get_detailed_outcome(row):
             res = str(row['Result']).strip().lower() if pd.notna(row['Result']) else ''
             typ = str(row['Type_Positional']).strip().lower() if pd.notna(row['Type_Positional']) else ''
-            sav = str(row['Saves_Detail']).strip().lower() if 'Saves_Detail' in row and pd.notna(row['Saves_Detail']) else ''
+            sav = str(row['Saves_Detail']).strip().lower() if pd.notna(row['Saves_Detail']) else ''
             
             if res == 'goal':
                 return 'Goal'
@@ -127,8 +130,11 @@ if data_source is not None:
         df['Action_Detail'] = df.apply(get_action_detail, axis=1)
         df['Detailed_Outcome'] = df.apply(get_detailed_outcome, axis=1)
 
-        # Filtri Sidebar
         teams = df['Team'].dropna().unique().tolist()
+        teams = [t for t in teams if str(t).strip() in ['DEN', 'SLO', 'RIV'] or len(str(t).strip()) == 3]
+        if not teams:
+            teams = df['Team'].dropna().unique().tolist()
+
         selected_team = st.sidebar.selectbox("🎯 Select Team:", teams)
         
         team_df = df[df['Team'] == selected_team].copy()
