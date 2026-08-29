@@ -7,10 +7,10 @@ st.set_page_config(page_title="Handball Tactical Analytics", layout="wide")
 st.title("🤾‍♂️ Handball Tactical Analytics - Dashboard")
 st.markdown("---")
 
+# --- SIDEBAR: CARICAMENTO DATI ---
 st.sidebar.subheader("📂 Select Match Data")
 
-# 1. Caricamento tramite File Locale o Link Google Drive
-uploaded_file = st.sidebar.file_uploader("Upload Match CSV File (.csv)", type=None) # type=None permette la selezione da qualsiasi smartphone
+uploaded_file = st.sidebar.file_uploader("Upload Match CSV File (.csv)", type=None)
 drive_link = st.sidebar.text_input("Or paste Google Drive Link:")
 
 data_source = None
@@ -19,7 +19,6 @@ if uploaded_file is not None:
     data_source = uploaded_file
 elif drive_link:
     try:
-        # Trasforma il link di condivisione Drive in link di download diretto
         if "/d/" in drive_link:
             file_id = drive_link.split("/d/")[1].split("/")[0]
             data_source = f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -30,14 +29,24 @@ elif drive_link:
 
 if data_source is not None:
     try:
-        # Legge il file sia se proviene da uploader sia da URL Google Drive
+        # 1. Estrazione delle righe sia per Upload Locale sia per Google Drive URL
+        lines = []
         if isinstance(data_source, str):
-            lines = pd.read_csv(data_source, header=None, encoding='latin1', on_bad_lines='skip', engine='python')
-            # Trasforma il DataFrame letto da URL in struttura utilizzabile dallo script
-            # ...
+            lines_df = pd.read_csv(data_source, header=None, encoding='latin1', on_bad_lines='skip', engine='python')
+            lines = [",".join(map(str, row)) for row in lines_df.values]
+        else:
+            data_source.seek(0)
+            lines = [line.decode('utf-8', errors='ignore') for line in data_source.readlines()]
 
-        # --- ESTRAZIONE AUTOMATICA DEL PACE DALLA CELLA F4/F5 DELL'INTESTAZIONE ---
-        extracted_pace = 50  # Valore di fallback predefinito
+        start_row = 0
+        for idx, line in enumerate(lines):
+            first_val = line.split(',')[0].strip().replace('"', '')
+            if first_val in ['DEN', 'SLO']:
+                start_row = idx
+                break
+
+        # Estrattore automatico Pace dall'intestazione del foglio
+        extracted_pace = 50
         for line in lines[:start_row]:
             parts = [p.strip().replace('"', '') for p in line.split(',')]
             for idx_p, part in enumerate(parts):
@@ -45,34 +54,35 @@ if data_source is not None:
                     if idx_p + 1 < len(parts) and parts[idx_p + 1].isdigit():
                         extracted_pace = int(parts[idx_p + 1])
                         break
-        
-        # 2. Read dataset
-        uploaded_file.seek(0)
-        try:
-            df = pd.read_csv(uploaded_file, skiprows=start_row, header=None, sep=None, engine='python')
-        except:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, skiprows=start_row, header=None, sep=';')
-        
-        # Column Mapping
+
+        # 2. Lettura del dataset principale
+        if isinstance(data_source, str):
+            df = pd.read_csv(data_source, skiprows=start_row, header=None, encoding='latin1', on_bad_lines='skip', engine='python')
+        else:
+            data_source.seek(0)
+            try:
+                df = pd.read_csv(data_source, skiprows=start_row, header=None, sep=None, engine='python')
+            except:
+                data_source.seek(0)
+                df = pd.read_csv(data_source, skiprows=start_row, header=None, sep=';')
+
+        # Mapping Colonne
         df.rename(columns={
             0: 'Team', 
             1: 'Result', 
-            2: 'Type_Positional', # Col C
+            2: 'Type_Positional',
             3: 'Side', 
             4: 'Saves_Detail',
-            7: 'Counter_Detail', # Col H
-            8: 'Detail_7m'       # Col I
+            7: 'Counter_Detail',
+            8: 'Detail_7m'
         }, inplace=True)
-        
-        # 3. 7-Meter Identification
+
         def process_7m(row):
             val_i = str(row['Detail_7m']).strip() if 'Detail_7m' in row and pd.notna(row['Detail_7m']) else ''
             if val_i != '' and any(k in val_i.lower() for k in ['7m', '7m ext attack', '7m dwn attack', '7m 7x6']):
                 return val_i
             return None
 
-        # 4. Game Phase Classification
         def get_game_phase(row):
             typ = str(row['Type_Positional']).strip().lower() if pd.notna(row['Type_Positional']) else ''
             if 'counter' in typ or typ.startswith('c '):
@@ -82,7 +92,6 @@ if data_source is not None:
             else:
                 return 'Other / Unspecified'
 
-        # 5. Action Detail Extraction
         def get_action_detail(row):
             p_7m = process_7m(row)
             if p_7m:
@@ -96,7 +105,6 @@ if data_source is not None:
                 return p_detail if p_detail != '' else 'Generic Positional'
             return 'Other'
 
-        # 6. Detailed Outcome Creation
         def get_detailed_outcome(row):
             res = str(row['Result']).strip().lower() if pd.notna(row['Result']) else ''
             typ = str(row['Type_Positional']).strip().lower() if pd.notna(row['Type_Positional']) else ''
@@ -119,7 +127,7 @@ if data_source is not None:
         df['Action_Detail'] = df.apply(get_action_detail, axis=1)
         df['Detailed_Outcome'] = df.apply(get_detailed_outcome, axis=1)
 
-        # --- SIDEBAR FILTERS ---
+        # Filtri Sidebar
         teams = df['Team'].dropna().unique().tolist()
         selected_team = st.sidebar.selectbox("🎯 Select Team:", teams)
         
@@ -142,7 +150,6 @@ if data_source is not None:
             selected_phase = "7-Meter Penalties"
             selected_detail = "All Types"
 
-        # Apply Filters
         if only_7m:
             filtered_df = team_df[team_df['Is_7m'] == True].copy()
         elif selected_phase == "All Game Phases":
@@ -155,14 +162,12 @@ if data_source is not None:
         
         st.markdown("---")
         
-        # Pace / Possessions Input estrapolato in automatico dal foglio CSV
         possessions = st.sidebar.number_input(
             f"⏱️ Total Match Possessions (Pace) for {selected_team}:", 
             min_value=1, 
             value=extracted_pace
         )
         
-        # KPI Calculations
         gol = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Goal'])
         unf = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Turnover (unF)'])
         saves = len(filtered_df[filtered_df['Detailed_Outcome'] == 'GK Save'])
@@ -192,7 +197,6 @@ if data_source is not None:
         
         st.markdown("---")
         
-        # FILA 1: Istogramma Esiti & Tipologie
         c1, c2 = st.columns(2)
         
         with c1:
@@ -248,7 +252,6 @@ if data_source is not None:
 
         st.markdown("---")
         
-        # FILA 2: TABELLA ANALISI ZONALE COMPLETA
         st.subheader(f"📊 Zonal Tactical Analysis by Sector ({selected_phase})")
         
         zone_data = []
@@ -309,4 +312,4 @@ if data_source is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 else:
-    st.info("👆 Please upload a CSV file to launch analytics.")
+    st.info("👆 Please upload a CSV file or paste a Google Drive link to launch analytics.")
