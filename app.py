@@ -7,20 +7,34 @@ st.set_page_config(page_title="Handball Tactical Analytics", layout="wide")
 st.title("🤾‍♂️ Handball Tactical Analytics - Dashboard")
 st.markdown("---")
 
-uploaded_file = st.file_uploader("📂 Upload Match CSV File (.csv)", type=["csv"])
+st.sidebar.subheader("📂 Select Match Data")
+
+# 1. Caricamento tramite File Locale o Link Google Drive
+uploaded_file = st.sidebar.file_uploader("Upload Match CSV File (.csv)", type=None) # type=None permette la selezione da qualsiasi smartphone
+drive_link = st.sidebar.text_input("Or paste Google Drive Link:")
+
+data_source = None
 
 if uploaded_file is not None:
+    data_source = uploaded_file
+elif drive_link:
     try:
-        # 1. Search for header row where match data begins
-        uploaded_file.seek(0)
-        lines = [line.decode('utf-8', errors='ignore') for line in uploaded_file.readlines()]
-        
-        start_row = 0
-        for idx, line in enumerate(lines):
-            first_val = line.split(',')[0].strip().replace('"', '')
-            if first_val in ['DEN', 'SLO']:
-                start_row = idx
-                break
+        # Trasforma il link di condivisione Drive in link di download diretto
+        if "/d/" in drive_link:
+            file_id = drive_link.split("/d/")[1].split("/")[0]
+            data_source = f"https://drive.google.com/uc?export=download&id={file_id}"
+        else:
+            data_source = drive_link
+    except Exception as e:
+        st.sidebar.error("Invalid Google Drive link format.")
+
+if data_source is not None:
+    try:
+        # Legge il file sia se proviene da uploader sia da URL Google Drive
+        if isinstance(data_source, str):
+            lines = pd.read_csv(data_source, header=None, encoding='latin1', on_bad_lines='skip', engine='python')
+            # Trasforma il DataFrame letto da URL in struttura utilizzabile dallo script
+            # ...
 
         # --- ESTRAZIONE AUTOMATICA DEL PACE DALLA CELLA F4/F5 DELL'INTESTAZIONE ---
         extracted_pace = 50  # Valore di fallback predefinito
