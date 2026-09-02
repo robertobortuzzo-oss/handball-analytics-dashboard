@@ -18,7 +18,7 @@ except ImportError:
 st.set_page_config(page_title="Handball Tactical & Video Analytics", layout="wide", page_icon="🤾‍♂️")
 
 st.title("🤾‍♂️ Handball Tactical & Video Analytics - Dashboard")
-st.caption("Integrated Video Tagging, Player Scouting & Advanced Match Performance Engine")
+st.caption("Integrated Video Tagging, Fast Break Breakdown & Advanced Match Performance Engine")
 st.markdown("---")
 
 # --- SIDEBAR: DATA LOADING & FILTERS ---
@@ -120,7 +120,7 @@ if data_source is not None:
 
         df['Quarter'] = df['Minute_Num'].apply(get_quarter)
 
-        # Tactical Logic Mappings
+        # Tactical Logic Mappings & Fast Break Recovery
         def process_7m(row):
             val_i = str(row['Situation']).strip() if pd.notna(row['Situation']) else ''
             val_c = str(row['Type_Positional']).strip() if pd.notna(row['Type_Positional']) else ''
@@ -130,7 +130,8 @@ if data_source is not None:
 
         def get_game_phase(row):
             typ = str(row['Type_Positional']).strip().lower() if pd.notna(row['Type_Positional']) else ''
-            if 'counter' in typ or typ.startswith('c '):
+            cnt = str(row['Counter_Detail']).strip().lower() if pd.notna(row['Counter_Detail']) else ''
+            if 'counter' in typ or typ.startswith('c ') or 'counter' in cnt or cnt.startswith('c '):
                 return 'Fast Break / Transition'
             elif typ in ['wing', 'long', 'break', 'pivot', 'unf']:
                 return 'Positional Attack'
@@ -141,13 +142,20 @@ if data_source is not None:
             p_7m = process_7m(row)
             if p_7m:
                 return p_7m
+            
+            typ_str = str(row['Type_Positional']).strip() if pd.notna(row['Type_Positional']) else ''
+            cnt_str = str(row['Counter_Detail']).strip() if pd.notna(row['Counter_Detail']) else ''
+            
             phase = get_game_phase(row)
             if phase == 'Fast Break / Transition':
-                c_detail = str(row['Counter_Detail']).strip() if pd.notna(row['Counter_Detail']) else ''
-                return c_detail if c_detail != '' else 'Generic Counter'
+                # Check for explicit fast break types: C Direct, C Long, C Pivot, C Break, C Wing, Counter
+                if cnt_str != '' and cnt_str.lower() != 'nan':
+                    return cnt_str
+                elif typ_str != '' and typ_str.lower() != 'nan':
+                    return typ_str
+                return 'Generic Counter'
             elif phase == 'Positional Attack':
-                p_detail = str(row['Type_Positional']).strip() if pd.notna(row['Type_Positional']) else ''
-                return p_detail if p_detail != '' else 'Generic Positional'
+                return typ_str if typ_str != '' else 'Generic Positional'
             return 'Other'
 
         def get_detailed_outcome(row):
@@ -207,7 +215,7 @@ if data_source is not None:
             if selected_phase in ["Positional Attack", "Fast Break / Transition"]:
                 sub_df = team_df[team_df['Game_Phase'] == selected_phase]
                 detail_options = ["All Types"] + sorted(sub_df['Action_Detail'].dropna().unique().tolist())
-                st_label = "🚀 Fast Break Detail:" if selected_phase == "Fast Break / Transition" else "🎯 Positional Detail:"
+                st_label = "🚀 Fast Break Detail (C Direct, C Long, C Break, etc.):" if selected_phase == "Fast Break / Transition" else "🎯 Positional Detail:"
                 selected_detail = st.sidebar.selectbox(st_label, detail_options)
         else:
             selected_phase = "7-Meter Penalties"
@@ -283,26 +291,34 @@ if data_source is not None:
             st.plotly_chart(fig_q, use_container_width=True)
 
         with t2:
-            st.subheader("⚖️ Efficiency by Tactical Setup (Situation)")
-            setup_counts = filtered_df.groupby('Tactical_Setup').apply(
-                lambda x: pd.Series({
-                    'Total Actions': len(x[x['Detailed_Outcome'].notna()]),
-                    'Goals': len(x[x['Detailed_Outcome'] == 'Goal']),
-                    'Errors': len(x[x['Detailed_Outcome'].isin(['Turnover (unF)', 'Missed / Out'])]),
-                    'Efficiency %': round((len(x[x['Detailed_Outcome'] == 'Goal']) / len(x[x['Detailed_Outcome'].notna()]) * 100), 1) if len(x[x['Detailed_Outcome'].notna()]) > 0 else 0.0
-                })
-            ).reset_index()
+            if selected_phase == "Fast Break / Transition":
+                st.subheader("🚀 Fast Break Breakdown (C Direct, C Long, C Break, C Pivot, C Wing)")
+                counter_df = team_df[team_df['Game_Phase'] == 'Fast Break / Transition']
+                c_counts = counter_df['Action_Detail'].value_counts().reset_index()
+                c_counts.columns = ['Fast Break Type', 'Count']
+                fig_fb = px.bar(c_counts, x='Fast Break Type', y='Count', color='Fast Break Type', text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
+                st.plotly_chart(fig_fb, use_container_width=True)
+            else:
+                st.subheader("⚖️ Efficiency by Tactical Setup (Situation)")
+                setup_counts = filtered_df.groupby('Tactical_Setup').apply(
+                    lambda x: pd.Series({
+                        'Total Actions': len(x[x['Detailed_Outcome'].notna()]),
+                        'Goals': len(x[x['Detailed_Outcome'] == 'Goal']),
+                        'Errors': len(x[x['Detailed_Outcome'].isin(['Turnover (unF)', 'Missed / Out'])]),
+                        'Efficiency %': round((len(x[x['Detailed_Outcome'] == 'Goal']) / len(x[x['Detailed_Outcome'].notna()]) * 100), 1) if len(x[x['Detailed_Outcome'].notna()]) > 0 else 0.0
+                    })
+                ).reset_index()
 
-            fig_setup = px.bar(
-                setup_counts,
-                x='Tactical_Setup',
-                y=['Goals', 'Errors'],
-                barmode='group',
-                color_discrete_map={'Goals': '#00FF87', 'Errors': '#FF3B30'},
-                text_auto=True,
-                title="Goals vs Errors per Tactical Setup"
-            )
-            st.plotly_chart(fig_setup, use_container_width=True)
+                fig_setup = px.bar(
+                    setup_counts,
+                    x='Tactical_Setup',
+                    y=['Goals', 'Errors'],
+                    barmode='group',
+                    color_discrete_map={'Goals': '#00FF87', 'Errors': '#FF3B30'},
+                    text_auto=True,
+                    title="Goals vs Errors per Tactical Setup"
+                )
+                st.plotly_chart(fig_setup, use_container_width=True)
 
         st.markdown("---")
 
