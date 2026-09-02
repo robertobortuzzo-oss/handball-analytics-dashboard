@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import io
 import requests
 
-# Controllo disponibilita libreria PDF
+# Check PDF generation library availability
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -18,14 +18,14 @@ except ImportError:
 st.set_page_config(page_title="Handball Tactical & Video Analytics", layout="wide", page_icon="🤾‍♂️")
 
 st.title("🤾‍♂️ Handball Tactical & Video Analytics - Dashboard")
-st.caption("Modulo di Video Analisi Integrata, Scouting per Giocatore & Reportistica Avanzata")
+st.caption("Integrated Video Tagging, Player Scouting & Advanced Match Performance Engine")
 st.markdown("---")
 
-# --- SIDEBAR: CARICAMENTO DATI & FILTRI ---
-st.sidebar.subheader("📂 Selezione Dati Partita")
+# --- SIDEBAR: DATA LOADING & FILTERS ---
+st.sidebar.subheader("📂 Select Match Data")
 
-uploaded_file = st.sidebar.file_uploader("Upload File CSV (.csv)", type=None)
-drive_link = st.sidebar.text_input("Oppure incolla Link Google Drive:")
+uploaded_file = st.sidebar.file_uploader("Upload CSV File (.csv)", type=None)
+drive_link = st.sidebar.text_input("Or paste Google Drive Link:")
 
 data_source = None
 if uploaded_file is not None:
@@ -39,18 +39,18 @@ elif drive_link:
         else:
             data_source = drive_link
     except Exception as e:
-        st.sidebar.error("Formato link Google Drive non valido.")
+        st.sidebar.error("Invalid Google Drive link format.")
 
 if data_source is not None:
     try:
-        # 1. Caricamento Bytes
+        # 1. Raw Bytes Loading
         raw_bytes = None
         if isinstance(data_source, str):
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(data_source, headers=headers)
             raw_bytes = response.content
             if b"<!DOCTYPE html>" in raw_bytes or b"<html" in raw_bytes:
-                st.error("⚠️ Il link di Google Drive non è accessibile. Imposta la condivisione su 'Chiunque abbia il link'.")
+                st.error("⚠️ Google Drive link is not accessible. Please set sharing permissions to 'Anyone with the link'.")
                 st.stop()
         else:
             data_source.seek(0)
@@ -73,7 +73,7 @@ if data_source is not None:
                     start_row = idx
                 break
 
-        # Estrattore automatico Pace
+        # Automatic Match Pace Extractor
         extracted_pace = 50
         for line in lines[:start_row]:
             parts = [p.strip().replace('"', '') for p in line.split(',')]
@@ -83,7 +83,7 @@ if data_source is not None:
                         extracted_pace = int(parts[idx_p + 1])
                         break
 
-        # 2. Parsing DataFrame
+        # 2. DataFrame Parsing
         try:
             df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, engine='python', on_bad_lines='skip')
             if df.shape[1] == 1:
@@ -91,7 +91,7 @@ if data_source is not None:
         except:
             df = pd.read_csv(io.BytesIO(raw_bytes), skiprows=start_row, header=None, sep=';', engine='python', on_bad_lines='skip')
 
-        # Mappatura Posizionale Colonne (Foglio csv_type: Cols A-J)
+        # Positional Column Mapping (csv_type Sheet: Cols A-J)
         df['Team'] = df.iloc[:, 0] if df.shape[1] > 0 else None
         df['Result'] = df.iloc[:, 1] if df.shape[1] > 1 else None
         df['Type_Positional'] = df.iloc[:, 2] if df.shape[1] > 2 else None
@@ -103,12 +103,12 @@ if data_source is not None:
         df['Situation'] = df.iloc[:, 8] if df.shape[1] > 8 else ''
         df['Video_Link'] = df.iloc[:, 9] if df.shape[1] > 9 else None
 
-        # Minutaggio e Quarti di Gara
+        # Numeric Minute & Quarter Mapping
         df['Minute_Num'] = pd.to_numeric(df['Minute'], errors='coerce')
 
         def get_quarter(min_val):
             if pd.isna(min_val):
-                return 'Non specificato'
+                return 'Unspecified'
             elif min_val <= 15:
                 return "Q1 (0'-15')"
             elif min_val <= 30:
@@ -120,35 +120,35 @@ if data_source is not None:
 
         df['Quarter'] = df['Minute_Num'].apply(get_quarter)
 
-        # Mappature Tattiche
+        # Tactical Logic Mappings
         def process_7m(row):
             val_i = str(row['Situation']).strip() if pd.notna(row['Situation']) else ''
             val_c = str(row['Type_Positional']).strip() if pd.notna(row['Type_Positional']) else ''
             if any(k in val_i.lower() for k in ['7m', 'penalty']) or any(k in val_c.lower() for k in ['7m']):
-                return 'Rigore 7m'
+                return '7m Penalty'
             return None
 
         def get_game_phase(row):
             typ = str(row['Type_Positional']).strip().lower() if pd.notna(row['Type_Positional']) else ''
             if 'counter' in typ or typ.startswith('c '):
-                return 'Contropiede / Transizione'
+                return 'Fast Break / Transition'
             elif typ in ['wing', 'long', 'break', 'pivot', 'unf']:
-                return 'Attacco Posizionale'
+                return 'Positional Attack'
             else:
-                return 'Altro / Non specificato'
+                return 'Other / Unspecified'
 
         def get_action_detail(row):
             p_7m = process_7m(row)
             if p_7m:
                 return p_7m
             phase = get_game_phase(row)
-            if phase == 'Contropiede / Transizione':
+            if phase == 'Fast Break / Transition':
                 c_detail = str(row['Counter_Detail']).strip() if pd.notna(row['Counter_Detail']) else ''
-                return c_detail if c_detail != '' else 'Contropiede Generico'
-            elif phase == 'Attacco Posizionale':
+                return c_detail if c_detail != '' else 'Generic Counter'
+            elif phase == 'Positional Attack':
                 p_detail = str(row['Type_Positional']).strip() if pd.notna(row['Type_Positional']) else ''
-                return p_detail if p_detail != '' else 'Posizionale Generico'
-            return 'Altro'
+                return p_detail if p_detail != '' else 'Generic Positional'
+            return 'Other'
 
         def get_detailed_outcome(row):
             res = str(row['Result']).strip().lower() if pd.notna(row['Result']) else ''
@@ -158,11 +158,11 @@ if data_source is not None:
             if res == 'goal':
                 return 'Goal'
             elif typ == 'unf' or 'turnover' in typ:
-                return 'Palla Persa (unF)'
+                return 'Turnover (unF)'
             elif sav == 's' or 'save' in typ or 'save' in res:
-                return 'Parata Portiere'
+                return 'GK Save'
             elif res in ['no goal', 'out', 'miss']:
-                return 'Tiro Fuori / Palo'
+                return 'Missed / Out'
             else:
                 return None
 
@@ -174,87 +174,87 @@ if data_source is not None:
 
         def clean_sit(s):
             val = str(s).strip() if pd.notna(s) else ''
-            return val if val != '' else 'Parità (6v6)'
+            return val if val != '' else 'Equal (6v6)'
         df['Tactical_Setup'] = df['Situation'].apply(clean_sit)
 
-        # Filtri Sidebar
+        # Sidebar Filters
         teams = df['Team'].dropna().unique().tolist()
         teams = [t for t in teams if str(t).strip() in ['DEN', 'SLO', 'HOM', 'AWA', 'RIV'] or len(str(t).strip()) == 3]
         if not teams:
             teams = df['Team'].dropna().unique().tolist()
 
-        selected_team = st.sidebar.selectbox("🎯 Seleziona Squadra:", teams)
+        selected_team = st.sidebar.selectbox("🎯 Select Team:", teams)
         team_df = df[df['Team'] == selected_team].copy()
 
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🎛️ Filtri Combinati Tattici & Giocatore")
+        st.sidebar.subheader("🎛️ Player & Tactical Filters")
 
-        # Filtro Giocatore
+        # Player Scouting Filter
         players = team_df['Num_Player'].dropna().unique().tolist()
-        selected_player = st.sidebar.selectbox("👤 Giocatore / Num Maglia:", ["Tutti i Giocatori"] + [str(p) for p in sorted(players)])
+        selected_player = st.sidebar.selectbox("👤 Player / Jersey Num:", ["All Players"] + [str(p) for p in sorted(players)])
 
-        # Filtro Assetto Tattico
+        # Tactical Setup Filter
         setups = sorted(team_df['Tactical_Setup'].dropna().unique().tolist())
-        selected_setup = st.sidebar.selectbox("⚖️ Assetto Tattico (Situazione):", ["Tutti gli Assetti"] + setups)
+        selected_setup = st.sidebar.selectbox("⚖️ Tactical Setup (Situation):", ["All Setups"] + setups)
 
-        only_7m = st.sidebar.checkbox("🤾‍♂️ Isola Rigori 7 Metri")
+        only_7m = st.sidebar.checkbox("🤾‍♂️ Isolate 7-Meter Penalty Shots")
 
         if not only_7m:
-            phase_options = ["Tutte le Fasi", "Attacco Posizionale", "Contropiede / Transizione"]
-            selected_phase = st.sidebar.radio("⚡ Fase di Gioco:", phase_options)
+            phase_options = ["All Game Phases", "Positional Attack", "Fast Break / Transition"]
+            selected_phase = st.sidebar.radio("⚡ Game Phase:", phase_options)
             
-            selected_detail = "Tutti i Tipi"
-            if selected_phase in ["Attacco Posizionale", "Contropiede / Transizione"]:
+            selected_detail = "All Types"
+            if selected_phase in ["Positional Attack", "Fast Break / Transition"]:
                 sub_df = team_df[team_df['Game_Phase'] == selected_phase]
-                detail_options = ["Tutti i Tipi"] + sorted(sub_df['Action_Detail'].dropna().unique().tolist())
-                st_label = "🚀 Dettaglio Contropiede:" if selected_phase == "Contropiede / Transizione" else "🎯 Dettaglio Posizionale:"
+                detail_options = ["All Types"] + sorted(sub_df['Action_Detail'].dropna().unique().tolist())
+                st_label = "🚀 Fast Break Detail:" if selected_phase == "Fast Break / Transition" else "🎯 Positional Detail:"
                 selected_detail = st.sidebar.selectbox(st_label, detail_options)
         else:
-            selected_phase = "Rigori 7 Metri"
-            selected_detail = "Tutti i Tipi"
+            selected_phase = "7-Meter Penalties"
+            selected_detail = "All Types"
 
-        # Applicazione Filtri
+        # Apply Filters
         filtered_df = team_df.copy()
 
-        if selected_player != "Tutti i Giocatori":
+        if selected_player != "All Players":
             filtered_df = filtered_df[filtered_df['Num_Player'].astype(str) == selected_player]
 
-        if selected_setup != "Tutti gli Assetti":
+        if selected_setup != "All Setups":
             filtered_df = filtered_df[filtered_df['Tactical_Setup'] == selected_setup]
 
         if only_7m:
             filtered_df = filtered_df[filtered_df['Is_7m'] == True]
-        elif selected_phase != "Tutte le Fasi":
+        elif selected_phase != "All Game Phases":
             filtered_df = filtered_df[filtered_df['Game_Phase'] == selected_phase]
-            if selected_detail != "Tutti i Tipi":
+            if selected_detail != "All Types":
                 filtered_df = filtered_df[filtered_df['Action_Detail'] == selected_detail]
 
-        # Calcolo KPI
-        possessions = st.sidebar.number_input(f"⏱️ Pace Gara ({selected_team}):", min_value=1, value=extracted_pace)
+        # Calculate KPIs
+        possessions = st.sidebar.number_input(f"⏱️ Match Pace ({selected_team}):", min_value=1, value=extracted_pace)
 
         gol = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Goal'])
-        unf = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Palla Persa (unF)'])
-        saves = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Parata Portiere'])
-        missed = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Tiro Fuori / Palo'])
+        unf = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Turnover (unF)'])
+        saves = len(filtered_df[filtered_df['Detailed_Outcome'] == 'GK Save'])
+        missed = len(filtered_df[filtered_df['Detailed_Outcome'] == 'Missed / Out'])
         tot_azioni_filtrate = len(filtered_df[filtered_df['Detailed_Outcome'].notna()])
         eff_fase = (gol / tot_azioni_filtrate * 100) if tot_azioni_filtrate > 0 else 0.0
 
-        st.subheader(f"📊 KPI Tattici: {selected_team}")
+        st.subheader(f"📊 Tactical KPIs: {selected_team}")
         k1, k2, k3, k4, k5, k6 = st.columns(6)
-        k1.metric("Pace (Possessi)", possessions)
-        k2.metric("Azioni Filtrate", tot_azioni_filtrate)
-        k3.metric("Gol Segnati", gol)
-        k4.metric("Parate Subite", saves)
-        k5.metric("Palle Perse / Fuori", unf + missed)
-        k6.metric("Efficienza %", f"{eff_fase:.1f}%")
+        k1.metric("Match Pace", possessions)
+        k2.metric("Filtered Actions", tot_azioni_filtrate)
+        k3.metric("Goals Scored", gol)
+        k4.metric("GK Saves Faced", saves)
+        k5.metric("Turnovers / Misses", unf + missed)
+        k6.metric("Efficiency %", f"{eff_fase:.1f}%")
 
         st.markdown("---")
 
-        # --- EFFICACIA TEMPORALE & ASSETTI TATTICI ---
+        # --- TEMPORAL EFFICIENCY & TACTICAL SETUPS ---
         t1, t2 = st.columns(2)
 
         with t1:
-            st.subheader("⏱️ Efficienza Temporale per Quarto di Gara")
+            st.subheader("⏱️ Temporal Efficiency per Match Quarter")
             q_order = ["Q1 (0'-15')", "Q2 (15'-30')", "Q3 (30'-45')", "Q4 (45'-60'+)"]
             q_data = []
 
@@ -262,70 +262,70 @@ if data_source is not None:
                 q_df = filtered_df[filtered_df['Quarter'] == q]
                 q_tot = len(q_df[q_df['Detailed_Outcome'].notna()])
                 q_gol = len(q_df[q_df['Detailed_Outcome'] == 'Goal'])
-                q_err = len(q_df[q_df['Detailed_Outcome'].isin(['Palla Persa (unF)', 'Tiro Fuori / Palo'])])
+                q_err = len(q_df[q_df['Detailed_Outcome'].isin(['Turnover (unF)', 'Missed / Out'])])
                 q_eff = (q_gol / q_tot * 100) if q_tot > 0 else 0.0
-                q_data.append({"Quarto": q, "Azioni": q_tot, "Gol": q_gol, "Errori": q_err, "Efficienza %": round(q_eff, 1)})
+                q_data.append({"Quarter": q, "Actions": q_tot, "Goals": q_gol, "Errors": q_err, "Efficiency %": round(q_eff, 1)})
 
             df_quarter = pd.DataFrame(q_data)
 
             fig_q = go.Figure()
-            fig_q.add_trace(go.Bar(x=df_quarter['Quarto'], y=df_quarter['Gol'], name='Gol', marker_color='#00FF87'))
-            fig_q.add_trace(go.Bar(x=df_quarter['Quarto'], y=df_quarter['Errori'], name='Errori / Perse', marker_color='#FF3B30'))
-            fig_q.add_trace(go.Scatter(x=df_quarter['Quarto'], y=df_quarter['Efficienza %'], name='Efficienza %', yaxis='y2', mode='lines+markers+text', text=df_quarter['Efficienza %'].astype(str) + '%', textposition='top center', line=dict(color='#00E5FF', width=3)))
+            fig_q.add_trace(go.Bar(x=df_quarter['Quarter'], y=df_quarter['Goals'], name='Goals', marker_color='#00FF87'))
+            fig_q.add_trace(go.Bar(x=df_quarter['Quarter'], y=df_quarter['Errors'], name='Errors / Turnovers', marker_color='#FF3B30'))
+            fig_q.add_trace(go.Scatter(x=df_quarter['Quarter'], y=df_quarter['Efficiency %'], name='Efficiency %', yaxis='y2', mode='lines+markers+text', text=df_quarter['Efficiency %'].astype(str) + '%', textposition='top center', line=dict(color='#00E5FF', width=3)))
 
             fig_q.update_layout(
                 barmode='group',
-                yaxis=dict(title='Numero Azioni'),
-                yaxis2=dict(title='Efficienza %', overlaying='y', side='right', range=[0, 105]),
+                yaxis=dict(title='Action Count'),
+                yaxis2=dict(title='Efficiency %', overlaying='y', side='right', range=[0, 105]),
                 legend=dict(orientation='h', y=1.15),
                 margin=dict(l=20, r=20, t=30, b=20)
             )
             st.plotly_chart(fig_q, use_container_width=True)
 
         with t2:
-            st.subheader("⚖️ Efficienza per Assetto Tattico (Situazione)")
+            st.subheader("⚖️ Efficiency by Tactical Setup (Situation)")
             setup_counts = filtered_df.groupby('Tactical_Setup').apply(
                 lambda x: pd.Series({
-                    'Azioni Totali': len(x[x['Detailed_Outcome'].notna()]),
-                    'Gol': len(x[x['Detailed_Outcome'] == 'Goal']),
-                    'Errori': len(x[x['Detailed_Outcome'].isin(['Palla Persa (unF)', 'Tiro Fuori / Palo'])]),
-                    'Efficienza %': round((len(x[x['Detailed_Outcome'] == 'Goal']) / len(x[x['Detailed_Outcome'].notna()]) * 100), 1) if len(x[x['Detailed_Outcome'].notna()]) > 0 else 0.0
+                    'Total Actions': len(x[x['Detailed_Outcome'].notna()]),
+                    'Goals': len(x[x['Detailed_Outcome'] == 'Goal']),
+                    'Errors': len(x[x['Detailed_Outcome'].isin(['Turnover (unF)', 'Missed / Out'])]),
+                    'Efficiency %': round((len(x[x['Detailed_Outcome'] == 'Goal']) / len(x[x['Detailed_Outcome'].notna()]) * 100), 1) if len(x[x['Detailed_Outcome'].notna()]) > 0 else 0.0
                 })
             ).reset_index()
 
             fig_setup = px.bar(
                 setup_counts,
                 x='Tactical_Setup',
-                y=['Gol', 'Errori'],
+                y=['Goals', 'Errors'],
                 barmode='group',
-                color_discrete_map={'Gol': '#00FF87', 'Errori': '#FF3B30'},
+                color_discrete_map={'Goals': '#00FF87', 'Errors': '#FF3B30'},
                 text_auto=True,
-                title="Gol vs Errori per Assetto Tattico"
+                title="Goals vs Errors per Tactical Setup"
             )
             st.plotly_chart(fig_setup, use_container_width=True)
 
         st.markdown("---")
 
-        # --- TABELLA SETTORI ---
-        st.subheader("📊 Analisi Zonale per Settore di Campo")
+        # --- SECTOR SUMMARY ---
+        st.subheader("📊 Zonal Sector Efficiency Breakdown")
         zone_data = []
-        for side_key, side_name in [('left', 'Sinistra'), ('center', 'Centro'), ('right', 'Destra')]:
+        for side_key, side_name in [('left', 'Left'), ('center', 'Center'), ('right', 'Right')]:
             z_df = filtered_df[filtered_df['Side'].astype(str).str.strip().str.lower() == side_key]
             z_tot = len(z_df[z_df['Detailed_Outcome'].notna()])
             z_gol = len(z_df[z_df['Detailed_Outcome'] == 'Goal'])
-            z_parate = len(z_df[z_df['Detailed_Outcome'] == 'Parata Portiere'])
-            z_sbagliati = len(z_df[z_df['Detailed_Outcome'] == 'Tiro Fuori / Palo'])
-            z_unf = len(z_df[z_df['Detailed_Outcome'] == 'Palla Persa (unF)'])
+            z_parate = len(z_df[z_df['Detailed_Outcome'] == 'GK Save'])
+            z_sbagliati = len(z_df[z_df['Detailed_Outcome'] == 'Missed / Out'])
+            z_unf = len(z_df[z_df['Detailed_Outcome'] == 'Turnover (unF)'])
             z_eff = (z_gol / z_tot * 100) if z_tot > 0 else 0.0
 
             zone_data.append({
-                "Settore Campo": side_name,
-                "Azioni Totali": z_tot,
-                "Gol": z_gol,
-                "Parate Subite": z_parate,
-                "Tiri Fuori": z_sbagliati,
-                "Palle Perse": z_unf,
-                "Efficienza %": f"{z_eff:.1f}%"
+                "Field Sector": side_name,
+                "Total Actions": z_tot,
+                "Goals": z_gol,
+                "GK Saves": z_parate,
+                "Shots Out / Post": z_sbagliati,
+                "Turnovers (unF)": z_unf,
+                "Efficiency %": f"{z_eff:.1f}%"
             })
 
         df_zone = pd.DataFrame(zone_data)
@@ -333,8 +333,8 @@ if data_source is not None:
 
         st.markdown("---")
 
-        # --- VIDEO PLAYER INTEGRATO E REGISTRO ---
-        st.subheader("🎬 Video Tagging Integrato & Log Azioni")
+        # --- INTEGRATED VIDEO & MATCH LOG ---
+        st.subheader("🎬 Integrated Video Tagging & Match Log")
 
         log_cols = ['Minute', 'Num_Player', 'Team', 'Tactical_Setup', 'Game_Phase', 'Action_Detail', 'Detailed_Outcome', 'Side', 'Video_Link']
         log_df = filtered_df[filtered_df['Detailed_Outcome'].notna()][log_cols].copy()
@@ -345,22 +345,22 @@ if data_source is not None:
                 "Video_Link": st.column_config.LinkColumn(
                     "Video Clip 🎥",
                     validate="^https://.*",
-                    display_text="▶️ Apri Clip Video"
+                    display_text="▶️ Open Clip"
                 )
             },
             use_container_width=True,
             hide_index=True
         )
 
-        # Player Video Integrato con Offset -10s / +10s
-        st.markdown("#### 📽️ Player Video Clip con Finestra TAG (-10s / +10s)")
+        # Embedded Video Clip Player (-10s / +10s Offset)
+        st.markdown("#### 📽️ Video Clip Player (-10s TAG Offset Window)")
         video_rows = log_df[log_df['Video_Link'].notna() & (log_df['Video_Link'] != '')]
 
         if not video_rows.empty:
             selected_action_idx = st.selectbox(
-                "Seleziona l'azione da riprodurre nel player integrato:",
+                "Select action to launch embedded video clip:",
                 options=video_rows.index,
-                format_func=lambda i: f"Min {video_rows.loc[i, 'Minute']}' | Giocatore #{video_rows.loc[i, 'Num_Player']} | {video_rows.loc[i, 'Action_Detail']} -> {video_rows.loc[i, 'Detailed_Outcome']}"
+                format_func=lambda i: f"Min {video_rows.loc[i, 'Minute']}' | Player #{video_rows.loc[i, 'Num_Player']} | {video_rows.loc[i, 'Action_Detail']} -> {video_rows.loc[i, 'Detailed_Outcome']}"
             )
 
             sel_row = video_rows.loc[selected_action_idx]
@@ -374,18 +374,18 @@ if data_source is not None:
                 except:
                     start_sec = 0
 
-            st.info(f"▶️ Riproduzione azione Minuto **{min_val}'** (Inizio Clip: **{start_sec}s** | Finestra TAG -10s)")
+            st.info(f"▶️ Playing Action at Minute **{min_val}'** (Offset Start: **{start_sec}s** | -10s Tag Window)")
 
             try:
                 st.video(vid_url, start_time=start_sec)
             except Exception as vid_err:
-                st.warning(f"Impossibile incorporare direttamente il video. [Clicca qui per aprire il link esternamente]({vid_url})")
+                st.warning(f"Unable to embed player directly. [Click here to open Video Link externally]({vid_url})")
         else:
-            st.info("Nessun link video disponibile per i filtri selezionati.")
+            st.info("No video links available in the filtered dataset.")
 
-        # Export Report PDF
+        # Export PDF Report
         st.markdown("---")
-        st.subheader("📄 Reportistica PDF")
+        st.subheader("📄 Export Match Report")
 
         if HAS_REPORTLAB:
             def generate_pdf():
@@ -398,7 +398,7 @@ if data_source is not None:
                 story.append(Spacer(1, 12))
 
                 kpi_data = [
-                    ["Pace Gara", "Azioni Filtrate", "Gol", "Parate", "Perse/Fuori", "Efficienza %"],
+                    ["Pace", "Filtered Actions", "Goals", "Saves", "Turnovers/Out", "Efficiency %"],
                     [str(possessions), str(tot_azioni_filtrate), str(gol), str(saves), str(unf + missed), f"{eff_fase:.1f}%"]
                 ]
                 t_kpi = Table(kpi_data, colWidths=[80, 90, 60, 60, 90, 80])
@@ -416,13 +416,13 @@ if data_source is not None:
 
             pdf_bytes = generate_pdf()
             st.download_button(
-                label="📥 Scarica Report di Gara Completo (PDF)",
+                label="📥 Download Full Match Report (PDF)",
                 data=pdf_bytes,
-                file_name=f"Report_Tattico_{selected_team}.pdf",
+                file_name=f"Tactical_Report_{selected_team}.pdf",
                 mime="application/pdf"
             )
 
     except Exception as e:
-        st.error(f"Errore durante l'elaborazione dei dati: {e}")
+        st.error(f"Error processing dashboard data: {e}")
 else:
-    st.info("👆 Carica un file CSV o incolla il link di Google Drive per lanciare la video analisi.")
+    st.info("👆 Please upload a CSV file or paste a Google Drive link to launch video analytics.")
